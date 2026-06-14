@@ -165,6 +165,24 @@ Open the client URL displayed in the terminal.
 Zin Yaw Linn
 
 
+## Screenshots
+
+### Game Board
+
+![Game Board](docs/board.jpg)
+
+### Instructions
+
+![Instructions](docs/instruction.jpg)
+
+### Question Screen
+
+![Question Screen](docs/question.jpg)
+
+### Winner Screen
+
+![Winner Screen](docs/winner.jpg)
+
 
 
 
