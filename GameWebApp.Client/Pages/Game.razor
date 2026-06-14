@@ -1,0 +1,3111 @@
+@page "/"
+@page "/game"
+@using GameWebApp.Shared
+@using Microsoft.AspNetCore.SignalR.Client
+@implements IDisposable
+@implements IAsyncDisposable
+@inject HttpClient Http
+@inject IJSRuntime JS
+
+<PageTitle>Puzzle Game</PageTitle>
+
+<header class="game-top-header">
+    <h1>Puzzle Game</h1>
+
+    <div class="game-top-actions">
+        <label class="sound-toggle">
+            <input type="checkbox" @bind="isSoundOn" />
+            Sound On
+        </label>
+
+        @if (IsGameStarted)
+        {
+            <button class="btn btn-outline-primary btn-sm" @onclick="ShowHowToPlay">
+                How to Play
+            </button>
+
+            <button class="btn btn-outline-secondary btn-sm" @onclick="ResetGame" disabled="@isAnimatingMovement">
+                Reset Game / New Game
+            </button>
+        }
+    </div>
+</header>
+
+@if (!IsGameStarted)
+{
+    <section class="setup-panel">
+        <div class="setup-grid">
+            <div class="setup-left-column">
+                <div class="welcome-card">
+                    <span class="welcome-label">Local or Multiplayer</span>
+                    <h2>Puzzle Game</h2>
+                    <p class="welcome-subtitle">
+                        A two-group quiz board game. Roll the dice, answer questions, and race to the finish tile.
+                    </p>
+
+                    <div class="welcome-highlights">
+                        <span>Dice-first turns</span>
+                        <span>Question timer</span>
+                        <span>Finish tile 44</span>
+                    </div>
+                </div>
+
+                <section class="instructions-panel">
+                    <div class="setup-card-header">
+                        <span class="status-label">Guide</span>
+                        <h3>How to Play</h3>
+                    </div>
+
+                    <div class="instruction-columns">
+                        <div>
+                            <h4>Local Play</h4>
+                            <ul>
+                                <li>Enter Group 1 and Group 2 names.</li>
+                                <li>Click Start Game.</li>
+                                <li>Roll dice to decide who plays first.</li>
+                                <li>On each turn, roll the movement dice first.</li>
+                                <li>A question popup appears automatically.</li>
+                                <li>Correct answer: gain 1 score and move by the dice value.</li>
+                                <li>Wrong answer or timeout: no movement and no score.</li>
+                                <li>First player to reach Finish tile 44 wins.</li>
+                            </ul>
+                        </div>
+
+                        <div>
+                            <h4>Multiplayer Play</h4>
+                            <ul>
+                                <li>Player 1 enters a name and clicks Create Game.</li>
+                                <li>Player 2 enters a name and joins using the game code.</li>
+                                <li>When both players are ready, start the game.</li>
+                                <li>Game start, dice, questions, answers, timer, score, position, reset, and turns are synchronized.</li>
+                                <li>Only the current player can answer.</li>
+                                <li>The waiting player can view the question in read-only mode.</li>
+                                <li>A disconnected player can reconnect using the same game code and player name.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <div class="setup-right-column">
+                <section class="multiplayer-setup-panel setup-card">
+                    <div class="setup-card-header">
+                        <div>
+                            <span class="status-label">Online Room</span>
+                            <h3>Multiplayer Room</h3>
+                        </div>
+                        <span class="connection-pill">@multiplayerConnectionStatus</span>
+                    </div>
+
+                    <p class="setup-card-description">
+                        Create a room or join with a game code. Group names fill in automatically when both players are ready.
+                    </p>
+
+                    <div class="setup-form-field">
+                        <label for="multiplayerPlayerName" class="form-label">Player Name</label>
+                        <input id="multiplayerPlayerName" class="form-control setup-input" @bind="multiplayerPlayerName" />
+                    </div>
+
+                    <button class="btn setup-action-button create-game-button" @onclick="CreateMultiplayerGame" disabled="@(!IsMultiplayerConnected)">
+                        Create Game
+                    </button>
+
+                    @if (!string.IsNullOrWhiteSpace(currentMultiplayerGameCode))
+                    {
+                        <p class="multiplayer-code">Game Code: <strong>@currentMultiplayerGameCode</strong></p>
+                    }
+
+                    <div class="setup-form-field">
+                        <label for="joinGameCode" class="form-label">Game Code</label>
+                        <input id="joinGameCode" class="form-control setup-input" @bind="joinGameCode" />
+                    </div>
+
+                    <button class="btn setup-action-button join-game-button" @onclick="JoinMultiplayerGame" disabled="@(!IsMultiplayerConnected)">
+                        Join Game
+                    </button>
+
+                    @if (!string.IsNullOrWhiteSpace(multiplayerRoomMessage))
+                    {
+                        <p class="multiplayer-room-message">@multiplayerRoomMessage</p>
+                    }
+                </section>
+
+                <section class="local-play-panel setup-card">
+                    <div class="setup-card-header">
+                        <div>
+                            <span class="status-label">Same Screen</span>
+                            <h3>Local Play</h3>
+                        </div>
+                    </div>
+
+                    <p class="setup-card-description">
+                        Play with two groups on this computer.
+                    </p>
+
+                    <div class="setup-form-field">
+                        <label for="group1Name" class="form-label">Group 1</label>
+                        <input id="group1Name" class="form-control setup-input" @bind="request.Player1Name" />
+                    </div>
+
+                    <div class="setup-form-field">
+                        <label for="group2Name" class="form-label">Group 2</label>
+                        <input id="group2Name" class="form-control setup-input" @bind="request.Player2Name" />
+                    </div>
+
+                    <button class="btn setup-action-button start-game-button" @onclick="StartGame" disabled="@isStarting">
+                        Start Game
+                    </button>
+                </section>
+            </div>
+        </div>
+    </section>
+}
+
+@if (IsGameStarted)
+{
+<div class="game-layout mt-2">
+    <main class="game-main">
+        <aside class="game-info-panel">
+@if (hasWinner && WinnerPlayer is not null)
+{
+    <section class="winner-banner mt-3">
+        <div>
+            <span class="winner-label">Game Over</span>
+            <h2>@WinnerPlayer.Name wins!</h2>
+        </div>
+
+        <div class="winner-stats">
+            <div class="winner-stat winner-stat-main">
+                <span>Winner</span>
+                <strong>@WinnerPlayer.Name</strong>
+                <small>Score @WinnerPlayer.Score | Position @WinnerPlayer.Position</small>
+            </div>
+
+            @if (OtherPlayer is not null)
+            {
+                <div class="winner-stat">
+                    <span>Other Player</span>
+                    <strong>@OtherPlayer.Name</strong>
+                    <small>Score @OtherPlayer.Score | Position @OtherPlayer.Position</small>
+                </div>
+            }
+        </div>
+    </section>
+}
+
+@if (session is not null)
+{
+    <section class="player-summary">
+        <div class="player-summary-card @(currentPlayerName == session.Player1.Name && !hasWinner ? "player-summary-active" : "")">
+            <img class="summary-player-image" src="/images/game/run.jpg" alt="Group 1" />
+            <span class="status-label">Group 1</span>
+            <strong>@session.Player1.Name</strong>
+            <span>Score @session.Player1.Score</span>
+            <span>Position @session.Player1.Position</span>
+        </div>
+
+        <div class="player-summary-card @(currentPlayerName == session.Player2.Name && !hasWinner ? "player-summary-active" : "")">
+            <img class="summary-player-image" src="/images/game/run1.jpg" alt="Group 2" />
+            <span class="status-label">Group 2</span>
+            <strong>@session.Player2.Name</strong>
+            <span>Score @session.Player2.Score</span>
+            <span>Position @session.Player2.Position</span>
+        </div>
+    </section>
+
+    @if (IsFirstPlayerDecided && !hasWinner)
+    {
+        <div class="current-turn-badge">
+            Current Turn: @currentPlayerName
+        </div>
+    }
+
+    @if (!IsFirstPlayerDecided)
+    {
+        <button class="btn btn-secondary mt-2" @onclick="RollStartDice" disabled="@isRollingDice">
+            Roll Dice To Decide First Player
+        </button>
+    }
+
+    @if (IsFirstPlayerDecided && !hasWinner)
+    {
+        <p class="compact-note">@diceResult?.FirstPlayerName will play first.</p>
+    }
+}
+
+<section class="status-panel mt-2">
+    <div class="status-item status-main">
+        <span class="status-label">Status</span>
+        <span>@GameStatusMessage</span>
+    </div>
+
+    <div class="status-item">
+        <span class="status-label">Turn</span>
+        <span>@CurrentTurnDisplay</span>
+    </div>
+
+    <div class="status-item">
+        <span class="status-label">Group 1 Tile</span>
+        <span>@Group1TileColorDisplay</span>
+    </div>
+
+    <div class="status-item">
+        <span class="status-label">Group 2 Tile</span>
+        <span>@Group2TileColorDisplay</span>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="status-item status-note">
+            <span class="status-label">Message</span>
+            <span>@message</span>
+        </div>
+    }
+</section>
+
+<section class="multiplayer-panel mt-2">
+    <div class="multiplayer-panel-header">
+        <span class="status-label">Multiplayer</span>
+        <strong>@multiplayerConnectionStatus</strong>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(multiplayerRoomMessage))
+    {
+        <p class="multiplayer-room-message">@multiplayerRoomMessage</p>
+    }
+</section>
+        </aside>
+
+        <section class="game-center">
+@if (session is not null)
+{
+    <div class="game-board mt-3">
+        @for (var position = 0; position <= 44; position++)
+        {
+            <div class="board-tile @GetTileCssClass(position)" style="@GetTileGridStyle(position)">
+                <div class="tile-number">@position</div>
+                <div class="tile-label">@GetTileLabel(position)</div>
+                <div class="tile-color">@GetTileColor(position)</div>
+
+                <div class="player-markers">
+                    @if (session.Player1.Position == position)
+                    {
+                        <img class="player-marker @(currentPlayerName == session.Player1.Name && !hasWinner ? "player-marker-current" : "") @(isAnimatingMovement && currentPlayerName == session.Player1.Name ? "player-marker-moving" : "")" src="/images/game/run.jpg" alt="Group 1 marker" title="Group 1" />
+                    }
+
+                    @if (session.Player2.Position == position)
+                    {
+                        <img class="player-marker @(currentPlayerName == session.Player2.Name && !hasWinner ? "player-marker-current" : "") @(isAnimatingMovement && currentPlayerName == session.Player2.Name ? "player-marker-moving" : "")" src="/images/game/run1.jpg" alt="Group 2 marker" title="Group 2" />
+                    }
+                </div>
+            </div>
+        }
+
+        <div class="board-center-decoration">
+            <span>Finish Zone</span>
+        </div>
+    </div>
+}
+
+        </section>
+    </main>
+
+    <aside class="dice-panel">
+        <h2>Dice</h2>
+
+        @if (!IsFirstPlayerDecided || isRollingDice)
+        {
+            <section class="dice-card">
+                <span class="dice-card-label">First Player Dice</span>
+
+                @if (isRollingDice)
+                {
+                    <div class="dice-rolling dice-rolling-large">
+                        <div class="dice-results">
+                            <div class="dice-result">
+                                <img class="dice-image" src="@GetDiceImagePath(rollingPlayer1DiceValue)" alt="Rolling Group 1 dice" />
+                                <p>Group 1 rolling...</p>
+                            </div>
+
+                            <div class="dice-result">
+                                <img class="dice-image" src="@GetDiceImagePath(rollingPlayer2DiceValue)" alt="Rolling Group 2 dice" />
+                                <p>Group 2 rolling...</p>
+                            </div>
+                        </div>
+                    </div>
+                }
+                else if (diceResult is not null)
+                {
+                    <div class="dice-results">
+                        <div class="dice-result">
+                            <img class="dice-image" src="@GetDiceImagePath(diceResult.Player1DiceValue)" alt="Group 1 dice" />
+                            <p>Group 1: @diceResult.Player1DiceValue</p>
+                        </div>
+
+                        <div class="dice-result">
+                            <img class="dice-image" src="@GetDiceImagePath(diceResult.Player2DiceValue)" alt="Group 2 dice" />
+                            <p>Group 2: @diceResult.Player2DiceValue</p>
+                        </div>
+                    </div>
+
+                    <p class="dice-message">@diceResult.Message</p>
+                }
+                else
+                {
+                    <p class="dice-empty">Roll first-player dice after starting the game.</p>
+                }
+            </section>
+        }
+
+        <section class="dice-card">
+            <span class="dice-card-label">Movement Dice</span>
+
+            @if (isRollingMovementDice)
+            {
+                <div class="dice-rolling dice-rolling-large">
+                    <img class="dice-image dice-image-large" src="@GetDiceImagePath(rollingMovementDiceValue)" alt="Rolling movement dice" />
+                    <p>Rolling movement dice...</p>
+                </div>
+            }
+            else if (movementDiceValue > 0)
+            {
+                <div class="movement-dice-final">
+                    <img class="dice-image dice-image-large" src="@GetDiceImagePath(movementDiceValue)" alt="Movement dice" />
+                    <p>Move @movementDiceValue spaces</p>
+                </div>
+            }
+            else
+            {
+                <p class="dice-empty">Roll movement dice to open a question.</p>
+            }
+
+            @if (CanRollMovementDice)
+            {
+                <button class="btn roll-movement-button" @onclick="RollMovementDice" disabled="@isRollingMovementDice">
+                    Roll Movement Dice
+                </button>
+            }
+            else if (IsMultiplayerGameplay && IsFirstPlayerDecided && !IsCurrentMultiplayerPlayerTurn && question is null && !hasWinner)
+            {
+                <p class="dice-empty">Waiting for @currentPlayerName to roll.</p>
+            }
+        </section>
+    </aside>
+</div>
+}
+
+@if (isQuestionModalOpen && question is not null)
+{
+    <div class="question-modal-backdrop">
+        <section class="question-modal" role="dialog" aria-modal="true" aria-labelledby="question-modal-title">
+            <div class="question-modal-header">
+                <span class="question-section-label">Question Card</span>
+                <strong id="question-modal-title">@currentPlayerName</strong>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(questionTileMessage))
+            {
+                <p class="question-tile-message">@questionTileMessage</p>
+            }
+
+            @if (IsWaitingForMultiplayerAnswer)
+            {
+                <p class="readonly-question-message">Waiting for @currentPlayerName to answer.</p>
+            }
+
+            <div class="question-timer">
+                <span>Time remaining</span>
+                <strong>@remainingSeconds seconds</strong>
+            </div>
+
+            <div class="question-text">
+                @question.Text
+            </div>
+
+            @if (movementDiceValue == 0 && !isQuestionExpired)
+            {
+                <p class="submit-hint">Roll the movement dice to open the question popup.</p>
+            }
+
+            <div class="answer-options">
+                <span class="question-section-label">Answer Options</span>
+
+                @foreach (var option in question.Options)
+                {
+                    <div class="form-check answer-option">
+                        <input class="form-check-input"
+                               type="radio"
+                               name="questionOption"
+                               id="option-@option.Number"
+                               value="@option.Number"
+                               disabled="@(!CanSelectAnswer)"
+                               checked="@(selectedAnswerNumber == option.Number)"
+                               @onchange="() => SelectAnswer(option.Number)" />
+                        <label class="form-check-label" for="option-@option.Number">
+                            @option.Text
+                        </label>
+                    </div>
+                }
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(questionModalMessage))
+            {
+                <div class="question-modal-result">
+                    @questionModalMessage
+                </div>
+            }
+
+            <div class="question-actions">
+                @if (CanSubmitAnswer)
+                {
+                    <button class="btn btn-primary" @onclick="SubmitAnswer" disabled="@isSubmittingAnswer">
+                        Submit Answer
+                    </button>
+                }
+                else if (IsWaitingForMultiplayerAnswer)
+                {
+                    <span class="submit-hint">Waiting for @currentPlayerName to answer.</span>
+                }
+                else
+                {
+                    <span class="submit-hint">Choose an answer to submit.</span>
+                }
+            </div>
+        </section>
+    </div>
+}
+
+@if (isHowToPlayOpen)
+{
+    <div class="help-modal-backdrop" @onclick="HideHowToPlay">
+        <section class="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-modal-title" @onclick:stopPropagation="true">
+            <div class="help-modal-header">
+                <h2 id="help-modal-title">How to Play</h2>
+                <button class="btn btn-sm btn-outline-secondary" @onclick="HideHowToPlay">
+                    Close
+                </button>
+            </div>
+
+            <h3>Local Play</h3>
+            <ul>
+                <li>Enter Group 1 and Group 2 names, then click Start Game.</li>
+                <li>Roll dice to decide who plays first.</li>
+                <li>On each turn, roll the movement dice first. A question popup appears automatically.</li>
+                <li>Answer before the timer reaches 0.</li>
+                <li>Correct answer: gain 1 score and move forward by the dice value.</li>
+                <li>Wrong answer or timeout: no movement and no score.</li>
+                <li>The first player to reach the Finish tile wins.</li>
+            </ul>
+
+            <h3>Multiplayer Play</h3>
+            <ul>
+                <li>Player 1 enters a name and clicks Create Game.</li>
+                <li>Player 2 enters a name and joins using the game code.</li>
+                <li>When both players are ready, start the game.</li>
+                <li>Game start, dice rolls, questions, answers, score, position, timer, reset, and turns are synchronized.</li>
+                <li>Only the current player can roll and answer during their turn.</li>
+                <li>If a player disconnects, they can reconnect using the same game code and player name.</li>
+            </ul>
+        </section>
+    </div>
+}
+
+@code {
+    private readonly StartGameRequest request = new();
+    private GameSessionDto? session;
+    private RollDiceResultDto? diceResult;
+    private QuestionDto? question;
+    private SubmitAnswerResultDto? answerResult;
+    private HubConnection? hubConnection;
+    private string? message;
+    private string? currentPlayerName;
+    private string? tileMessage;
+    private string? questionTileMessage;
+    private string? questionModalMessage;
+    private string multiplayerConnectionStatus = "Disconnected";
+    private string multiplayerRoomStatus = "Not connected";
+    private string multiplayerPlayerName = string.Empty;
+    private string joinGameCode = string.Empty;
+    private string currentMultiplayerGameCode = string.Empty;
+    private string multiplayerRoomMessage = string.Empty;
+    private readonly List<int> usedQuestionIds = new();
+    private int selectedAnswerNumber;
+    private int movementDiceValue;
+    private int rollingPlayer1DiceValue = 1;
+    private int rollingPlayer2DiceValue = 1;
+    private int rollingMovementDiceValue = 1;
+    private int remainingSeconds;
+    private int questionTimeLimitSeconds = 30;
+    private bool hasWinner;
+    private bool hasSubmittedCurrentQuestion;
+    private bool isStarting;
+    private bool isRollingDice;
+    private bool isRollingMovementDice;
+    private bool isLoadingQuestion;
+    private bool isSubmittingAnswer;
+    private bool isQuestionExpired;
+    private bool isQuestionModalOpen;
+    private bool isAnimatingMovement;
+    private bool isSoundOn = true;
+    private bool isHowToPlayOpen;
+    private DateTime? questionStartedAtUtc;
+    private CancellationTokenSource? countdownCancellation;
+
+    private bool IsGameStarted => session is not null;
+
+    private bool IsMultiplayerConnected => hubConnection?.State == HubConnectionState.Connected;
+
+    private bool IsMultiplayerRoomReady => IsMultiplayerConnected &&
+        !string.IsNullOrWhiteSpace(currentMultiplayerGameCode) &&
+        (multiplayerRoomStatus == "Game ready" || multiplayerRoomStatus == "Game started");
+
+    private bool ShouldStartMultiplayerGame => IsMultiplayerConnected &&
+        !string.IsNullOrWhiteSpace(currentMultiplayerGameCode) &&
+        multiplayerRoomStatus == "Game ready";
+
+    private bool ShouldRollMultiplayerFirstDice => IsMultiplayerRoomReady && IsGameStarted;
+
+    private bool IsMultiplayerGameplay => IsMultiplayerRoomReady && IsGameStarted;
+
+    private bool IsCurrentMultiplayerPlayerTurn => !IsMultiplayerGameplay ||
+        (!string.IsNullOrWhiteSpace(multiplayerPlayerName) &&
+         string.Equals(multiplayerPlayerName.Trim(), currentPlayerName, StringComparison.OrdinalIgnoreCase));
+
+    private bool IsFirstPlayerDecided => !string.IsNullOrWhiteSpace(currentPlayerName) && diceResult?.IsDraw == false;
+
+    private bool CanRollMovementDice => IsGameStarted && IsFirstPlayerDecided && IsCurrentMultiplayerPlayerTurn && question is null && movementDiceValue == 0 && !isLoadingQuestion && !isQuestionModalOpen && !isRollingMovementDice && !isAnimatingMovement && !hasWinner;
+
+    private bool CanSelectAnswer => question is not null && isQuestionModalOpen && IsCurrentMultiplayerPlayerTurn && !isQuestionExpired && !isSubmittingAnswer && !hasSubmittedCurrentQuestion && !hasWinner;
+
+    private bool CanSubmitAnswer => question is not null && isQuestionModalOpen && IsCurrentMultiplayerPlayerTurn && movementDiceValue > 0 && selectedAnswerNumber > 0 && !isRollingMovementDice && !isAnimatingMovement && !isSubmittingAnswer && !isQuestionExpired && remainingSeconds > 0 && !hasWinner && !hasSubmittedCurrentQuestion;
+
+    private bool IsWaitingForMultiplayerAnswer => IsMultiplayerGameplay && question is not null && isQuestionModalOpen && !IsCurrentMultiplayerPlayerTurn && !hasWinner;
+
+    private PlayerDto? WinnerPlayer
+    {
+        get
+        {
+            if (!hasWinner || session is null)
+            {
+                return null;
+            }
+
+            if (session.Player1.Position >= 44)
+            {
+                return session.Player1;
+            }
+
+            if (session.Player2.Position >= 44)
+            {
+                return session.Player2;
+            }
+
+            return GetCurrentPlayer();
+        }
+    }
+
+    private PlayerDto? OtherPlayer
+    {
+        get
+        {
+            if (session is null || WinnerPlayer is null)
+            {
+                return null;
+            }
+
+            return WinnerPlayer.Name == session.Player1.Name
+                ? session.Player2
+                : session.Player1;
+        }
+    }
+
+    private string GameStatusMessage
+    {
+        get
+        {
+            if (!IsGameStarted)
+            {
+                return "Enter group names to start.";
+            }
+
+            if (hasWinner)
+            {
+                return $"Game over. {currentPlayerName} wins.";
+            }
+
+            if (isAnimatingMovement)
+            {
+                return $"{currentPlayerName} is moving on the board.";
+            }
+
+            if (!IsFirstPlayerDecided)
+            {
+                return "Roll dice to decide first player.";
+            }
+
+            if (question is not null)
+            {
+                if (IsMultiplayerGameplay && !IsCurrentMultiplayerPlayerTurn)
+                {
+                    return $"Waiting for {currentPlayerName} to answer.";
+                }
+
+                return "Answer the question before time runs out.";
+            }
+
+            if (IsMultiplayerGameplay && !IsCurrentMultiplayerPlayerTurn)
+            {
+                return $"Waiting for {currentPlayerName} to roll.";
+            }
+
+            return $"It is {currentPlayerName}'s turn. Roll the movement dice.";
+        }
+    }
+
+    private string CurrentTurnDisplay
+    {
+        get
+        {
+            if (hasWinner)
+            {
+                return "Game over";
+            }
+
+            return string.IsNullOrWhiteSpace(currentPlayerName) ? "Not decided" : currentPlayerName;
+        }
+    }
+
+    private string Group1TileColorDisplay => session is null ? "Not started" : GetTileColorName(session.Player1.Position);
+
+    private string Group2TileColorDisplay => session is null ? "Not started" : GetTileColorName(session.Player2.Position);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ConnectToGameHub();
+    }
+
+    private async Task ConnectToGameHub()
+    {
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl("http://localhost:5073/gamehub")
+            .WithAutomaticReconnect()
+            .Build();
+
+        hubConnection.On<string>("GameCreated", async gameCode =>
+        {
+            currentMultiplayerGameCode = gameCode;
+            joinGameCode = gameCode;
+            multiplayerRoomMessage = "Share this game code with Player 2.";
+            await InvokeAsync(StateHasChanged);
+        });
+
+        hubConnection.On<string>("MultiplayerStatus", async status =>
+        {
+            multiplayerRoomStatus = status;
+            await InvokeAsync(StateHasChanged);
+        });
+
+        hubConnection.On<string, string, string>("GameReady", async (gameCode, player1Name, player2Name) =>
+        {
+            currentMultiplayerGameCode = gameCode;
+            joinGameCode = gameCode;
+            multiplayerRoomStatus = "Game ready";
+            multiplayerRoomMessage = "Both players joined. You can start the game when ready.";
+            request.Player1Name = player1Name;
+            request.Player2Name = player2Name;
+            await InvokeAsync(StateHasChanged);
+        });
+
+        hubConnection.On<string, string, string, int, int, int, int>(
+            "MultiplayerGameStarted",
+            async (gameCode, player1Name, player2Name, player1Score, player2Score, player1Position, player2Position) =>
+            {
+                currentMultiplayerGameCode = gameCode;
+                joinGameCode = gameCode;
+                multiplayerRoomStatus = "Game started";
+                multiplayerRoomMessage = "Multiplayer game started. Roll dice to decide who plays first.";
+                request.Player1Name = player1Name;
+                request.Player2Name = player2Name;
+
+                ClearStateForNewGame();
+
+                session = new GameSessionDto
+                {
+                    Player1 = new PlayerDto
+                    {
+                        Name = player1Name,
+                        Score = player1Score,
+                        Position = player1Position
+                    },
+                    Player2 = new PlayerDto
+                    {
+                        Name = player2Name,
+                        Score = player2Score,
+                        Position = player2Position
+                    },
+                    Message = "The multiplayer game has started."
+                };
+
+                message = session.Message;
+                isStarting = false;
+                await PlaySound("start");
+                await InvokeAsync(StateHasChanged);
+            });
+
+        hubConnection.On<string, int, int, string, string, bool, string>(
+            "MultiplayerFirstDiceRolled",
+            async (gameCode, player1DiceValue, player2DiceValue, firstPlayerName, currentTurnPlayerName, isDraw, rollMessage) =>
+            {
+                currentMultiplayerGameCode = gameCode;
+                joinGameCode = gameCode;
+                rollingPlayer1DiceValue = player1DiceValue;
+                rollingPlayer2DiceValue = player2DiceValue;
+                diceResult = new RollDiceResultDto
+                {
+                    Player1DiceValue = player1DiceValue,
+                    Player2DiceValue = player2DiceValue,
+                    FirstPlayerName = firstPlayerName,
+                    IsDraw = isDraw,
+                    Message = rollMessage
+                };
+
+                currentPlayerName = isDraw ? null : currentTurnPlayerName;
+                tileMessage = currentPlayerName is null ? null : $"{currentPlayerName} is on {GetCurrentPlayerTileColorName()} tile";
+                message = isDraw ? rollMessage : null;
+                isRollingDice = false;
+                await InvokeAsync(StateHasChanged);
+            });
+
+        hubConnection.On<string, string, int>(
+            "MultiplayerMovementDiceRolled",
+            async (gameCode, turnPlayerName, diceValue) =>
+            {
+                currentMultiplayerGameCode = gameCode;
+                currentPlayerName = turnPlayerName;
+                movementDiceValue = diceValue;
+                rollingMovementDiceValue = diceValue;
+                isRollingMovementDice = false;
+                await InvokeAsync(StateHasChanged);
+            });
+
+        hubConnection.On<string, string, int, QuestionDto, DateTime, int>(
+            "MultiplayerQuestionLoaded",
+            async (gameCode, turnPlayerName, diceValue, loadedQuestion, questionStartedAt, timeLimitSeconds) =>
+            {
+                currentMultiplayerGameCode = gameCode;
+                currentPlayerName = turnPlayerName;
+                movementDiceValue = diceValue;
+                rollingMovementDiceValue = diceValue;
+                question = loadedQuestion;
+                if (!usedQuestionIds.Contains(loadedQuestion.QuestionId))
+                {
+                    usedQuestionIds.Add(loadedQuestion.QuestionId);
+                }
+
+                answerResult = null;
+                selectedAnswerNumber = 0;
+                questionStartedAtUtc = DateTime.SpecifyKind(questionStartedAt, DateTimeKind.Utc);
+                questionTimeLimitSeconds = timeLimitSeconds;
+                remainingSeconds = GetServerBasedRemainingSeconds();
+                isQuestionExpired = false;
+                hasSubmittedCurrentQuestion = false;
+                questionTileMessage = $"Question loaded for {GetCurrentPlayerTileColorName()} tile";
+                questionModalMessage = null;
+                isQuestionModalOpen = true;
+                isLoadingQuestion = false;
+                StopCountdown();
+                StartCountdown();
+
+                await InvokeAsync(StateHasChanged);
+            });
+
+        hubConnection.On<string, string, SubmitAnswerResultDto>(
+            "MultiplayerAnswerSubmitted",
+            async (gameCode, answeringPlayerName, result) =>
+            {
+                currentMultiplayerGameCode = gameCode;
+                answerResult = result;
+                questionModalMessage = result.Message;
+                message = $"{answeringPlayerName}: {result.Message}";
+                isSubmittingAnswer = false;
+                hasSubmittedCurrentQuestion = true;
+                StopCountdown();
+                await PlaySound(result.Message == "Time is up" ? "timeUp" : result.IsCorrect ? "correct" : "wrong");
+                await InvokeAsync(StateHasChanged);
+            });
+
+        hubConnection.On<string, int, int, int, int, string, string>(
+            "MultiplayerGameStateUpdated",
+            async (gameCode, player1Score, player2Score, player1Position, player2Position, nextTurnPlayerName, winnerName) =>
+            {
+                currentMultiplayerGameCode = gameCode;
+                await ApplyMultiplayerGameState(
+                    player1Score,
+                    player2Score,
+                    player1Position,
+                    player2Position,
+                    nextTurnPlayerName,
+                    winnerName);
+            });
+
+        hubConnection.On<string, string, string, int, int, int, int>(
+            "MultiplayerGameReset",
+            async (gameCode, player1Name, player2Name, player1Score, player2Score, player1Position, player2Position) =>
+            {
+                currentMultiplayerGameCode = gameCode;
+                joinGameCode = gameCode;
+                multiplayerRoomStatus = "Game ready";
+                multiplayerRoomMessage = "Multiplayer game reset. You can start again when ready.";
+                request.Player1Name = player1Name;
+                request.Player2Name = player2Name;
+                ClearStateForNewGame();
+                message = null;
+                isHowToPlayOpen = false;
+                await InvokeAsync(StateHasChanged);
+            });
+
+        hubConnection.On<string, string, string>(
+            "MultiplayerPlayerDisconnected",
+            async (gameCode, playerName, disconnectMessage) =>
+            {
+                currentMultiplayerGameCode = gameCode;
+                multiplayerRoomMessage = disconnectMessage;
+                await InvokeAsync(StateHasChanged);
+            });
+
+        hubConnection.On<string, string, string>(
+            "MultiplayerPlayerReconnected",
+            async (gameCode, playerName, reconnectMessage) =>
+            {
+                currentMultiplayerGameCode = gameCode;
+                multiplayerRoomMessage = reconnectMessage;
+                await InvokeAsync(StateHasChanged);
+            });
+
+        hubConnection.On<MultiplayerSessionStateDto>(
+            "MultiplayerSessionRestored",
+            async restoredState =>
+            {
+                RestoreMultiplayerSession(restoredState);
+                await InvokeAsync(StateHasChanged);
+            });
+
+        hubConnection.On<string>("MultiplayerError", async errorMessage =>
+        {
+            multiplayerRoomMessage = errorMessage;
+            isStarting = false;
+            isRollingDice = false;
+            isRollingMovementDice = false;
+            isSubmittingAnswer = false;
+            await InvokeAsync(StateHasChanged);
+        });
+
+        hubConnection.Reconnecting += error =>
+        {
+            multiplayerConnectionStatus = "Disconnected";
+            multiplayerRoomStatus = "Not connected";
+            return InvokeAsync(StateHasChanged);
+        };
+
+        hubConnection.Reconnected += connectionId =>
+        {
+            multiplayerConnectionStatus = "Connected";
+            multiplayerRoomStatus = string.IsNullOrWhiteSpace(currentMultiplayerGameCode) ? "Not connected" : multiplayerRoomStatus;
+            return InvokeAsync(async () =>
+            {
+                if (!string.IsNullOrWhiteSpace(currentMultiplayerGameCode) &&
+                    !string.IsNullOrWhiteSpace(multiplayerPlayerName) &&
+                    hubConnection is not null)
+                {
+                    await hubConnection.InvokeAsync("JoinGame", currentMultiplayerGameCode, multiplayerPlayerName);
+                }
+
+                StateHasChanged();
+            });
+        };
+
+        hubConnection.Closed += error =>
+        {
+            multiplayerConnectionStatus = "Disconnected";
+            multiplayerRoomStatus = "Not connected";
+            return InvokeAsync(StateHasChanged);
+        };
+
+        try
+        {
+            await hubConnection.StartAsync();
+            multiplayerConnectionStatus = "Connected";
+            multiplayerRoomStatus = "Not connected";
+        }
+        catch
+        {
+            multiplayerConnectionStatus = "Disconnected";
+            multiplayerRoomStatus = "Not connected";
+        }
+    }
+
+    private async Task CreateMultiplayerGame()
+    {
+        if (!IsMultiplayerConnected || hubConnection is null)
+        {
+            multiplayerRoomStatus = "Not connected";
+            multiplayerRoomMessage = "Multiplayer is disconnected. Start the API and refresh the page.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(multiplayerPlayerName))
+        {
+            multiplayerRoomMessage = "Player name is required.";
+            return;
+        }
+
+        try
+        {
+            multiplayerRoomMessage = string.Empty;
+            await hubConnection.InvokeAsync("CreateGame", multiplayerPlayerName);
+        }
+        catch
+        {
+            multiplayerConnectionStatus = "Disconnected";
+            multiplayerRoomStatus = "Not connected";
+            multiplayerRoomMessage = "Could not create multiplayer game.";
+        }
+    }
+
+    private async Task JoinMultiplayerGame()
+    {
+        if (!IsMultiplayerConnected || hubConnection is null)
+        {
+            multiplayerRoomStatus = "Not connected";
+            multiplayerRoomMessage = "Multiplayer is disconnected. Start the API and refresh the page.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(multiplayerPlayerName))
+        {
+            multiplayerRoomMessage = "Player name is required.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(joinGameCode))
+        {
+            multiplayerRoomMessage = "Game code is required.";
+            return;
+        }
+
+        try
+        {
+            multiplayerRoomMessage = string.Empty;
+            await hubConnection.InvokeAsync("JoinGame", joinGameCode, multiplayerPlayerName);
+        }
+        catch
+        {
+            multiplayerConnectionStatus = "Disconnected";
+            multiplayerRoomStatus = "Not connected";
+            multiplayerRoomMessage = "Could not join multiplayer game.";
+        }
+    }
+
+    private async Task PlaySound(string soundName)
+    {
+        if (!isSoundOn)
+        {
+            return;
+        }
+
+        try
+        {
+            await JS.InvokeVoidAsync("gameSounds.play", soundName);
+        }
+        catch
+        {
+        }
+    }
+
+    private void ClearStateForNewGame()
+    {
+        session = null;
+        diceResult = null;
+        question = null;
+        answerResult = null;
+        message = null;
+        currentPlayerName = null;
+        tileMessage = null;
+        questionTileMessage = null;
+        questionModalMessage = null;
+        usedQuestionIds.Clear();
+        selectedAnswerNumber = 0;
+        movementDiceValue = 0;
+        rollingPlayer1DiceValue = 1;
+        rollingPlayer2DiceValue = 1;
+        rollingMovementDiceValue = 1;
+        remainingSeconds = 0;
+        questionStartedAtUtc = null;
+        questionTimeLimitSeconds = 30;
+        isQuestionExpired = false;
+        hasSubmittedCurrentQuestion = false;
+        hasWinner = false;
+        isRollingDice = false;
+        isRollingMovementDice = false;
+        isLoadingQuestion = false;
+        isSubmittingAnswer = false;
+        isQuestionModalOpen = false;
+        isAnimatingMovement = false;
+        StopCountdown();
+    }
+
+    private async Task StartMultiplayerGame()
+    {
+        if (!IsMultiplayerConnected || hubConnection is null)
+        {
+            multiplayerRoomStatus = "Not connected";
+            multiplayerRoomMessage = "Multiplayer is disconnected. Start the API and refresh the page.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(currentMultiplayerGameCode))
+        {
+            multiplayerRoomMessage = "Create or join a multiplayer game first.";
+            return;
+        }
+
+        isStarting = true;
+        message = null;
+        multiplayerRoomMessage = string.Empty;
+
+        try
+        {
+            await hubConnection.InvokeAsync("StartMultiplayerGame", currentMultiplayerGameCode);
+        }
+        catch
+        {
+            isStarting = false;
+            multiplayerRoomMessage = "Could not start the multiplayer game.";
+        }
+    }
+
+    private async Task StartGame()
+    {
+        if (string.IsNullOrWhiteSpace(request.Player1Name) || string.IsNullOrWhiteSpace(request.Player2Name))
+        {
+            message = "Please enter names for both groups.";
+            session = null;
+            return;
+        }
+
+        if (ShouldStartMultiplayerGame)
+        {
+            await StartMultiplayerGame();
+            return;
+        }
+
+        isStarting = true;
+        ClearStateForNewGame();
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("http://localhost:5073/api/game/start", request);
+
+            if (response.IsSuccessStatusCode)
+            {
+                session = await response.Content.ReadFromJsonAsync<GameSessionDto>();
+                message = session?.Message ?? "The game has started.";
+                await PlaySound("start");
+            }
+            else
+            {
+                message = await response.Content.ReadAsStringAsync();
+            }
+        }
+        catch
+        {
+            message = "Could not start the game. Make sure the API is running.";
+        }
+        finally
+        {
+            isStarting = false;
+        }
+    }
+
+    private async Task ResetGame()
+    {
+        if (IsMultiplayerGameplay && IsMultiplayerConnected && hubConnection is not null)
+        {
+            try
+            {
+                await hubConnection.InvokeAsync("ResetMultiplayerGame", currentMultiplayerGameCode);
+            }
+            catch
+            {
+                multiplayerRoomMessage = "Could not reset the multiplayer game.";
+            }
+
+            return;
+        }
+
+        StopCountdown();
+
+        request.Player1Name = string.Empty;
+        request.Player2Name = string.Empty;
+        session = null;
+        diceResult = null;
+        question = null;
+        answerResult = null;
+        message = null;
+        currentPlayerName = null;
+        tileMessage = null;
+        questionTileMessage = null;
+        questionModalMessage = null;
+        usedQuestionIds.Clear();
+        selectedAnswerNumber = 0;
+        movementDiceValue = 0;
+        rollingPlayer1DiceValue = 1;
+        rollingPlayer2DiceValue = 1;
+        rollingMovementDiceValue = 1;
+        remainingSeconds = 0;
+        questionStartedAtUtc = null;
+        questionTimeLimitSeconds = 30;
+        hasWinner = false;
+        hasSubmittedCurrentQuestion = false;
+        isStarting = false;
+        isRollingDice = false;
+        isRollingMovementDice = false;
+        isLoadingQuestion = false;
+        isSubmittingAnswer = false;
+        isQuestionExpired = false;
+        isQuestionModalOpen = false;
+        isAnimatingMovement = false;
+        isHowToPlayOpen = false;
+    }
+
+    private void ShowHowToPlay()
+    {
+        isHowToPlayOpen = true;
+    }
+
+    private void HideHowToPlay()
+    {
+        isHowToPlayOpen = false;
+    }
+
+    private async Task RollStartDice()
+    {
+        if (session is null)
+        {
+            message = "Please start the game first.";
+            return;
+        }
+
+        isRollingDice = true;
+        diceResult = null;
+        question = null;
+        answerResult = null;
+        tileMessage = null;
+        questionTileMessage = null;
+        questionModalMessage = null;
+        selectedAnswerNumber = 0;
+        movementDiceValue = 0;
+        rollingPlayer1DiceValue = 1;
+        rollingPlayer2DiceValue = 1;
+        rollingMovementDiceValue = 1;
+        remainingSeconds = 0;
+        questionStartedAtUtc = null;
+        questionTimeLimitSeconds = 30;
+        isQuestionExpired = false;
+        hasSubmittedCurrentQuestion = false;
+        isRollingMovementDice = false;
+        isQuestionModalOpen = false;
+        StopCountdown();
+        await PlaySound("dice");
+        await AnimateStartDiceFaces();
+
+        if (session is null)
+        {
+            isRollingDice = false;
+            return;
+        }
+
+        if (ShouldRollMultiplayerFirstDice && hubConnection is not null)
+        {
+            try
+            {
+                await hubConnection.InvokeAsync("RollFirstPlayerDice", currentMultiplayerGameCode);
+            }
+            catch
+            {
+                isRollingDice = false;
+                multiplayerRoomMessage = "Could not roll multiplayer first-player dice.";
+            }
+
+            return;
+        }
+
+        var rollRequest = new RollDiceRequest
+        {
+            Player1Name = session.Player1.Name,
+            Player2Name = session.Player2.Name
+        };
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("http://localhost:5073/api/game/roll-start-dice", rollRequest);
+
+            if (response.IsSuccessStatusCode)
+            {
+                diceResult = await response.Content.ReadFromJsonAsync<RollDiceResultDto>();
+                rollingPlayer1DiceValue = diceResult?.Player1DiceValue ?? rollingPlayer1DiceValue;
+                rollingPlayer2DiceValue = diceResult?.Player2DiceValue ?? rollingPlayer2DiceValue;
+                currentPlayerName = diceResult?.IsDraw == false ? diceResult.FirstPlayerName : null;
+                tileMessage = currentPlayerName is null ? null : $"{currentPlayerName} is on {GetCurrentPlayerTileColorName()} tile";
+                message = null;
+            }
+            else
+            {
+                message = await response.Content.ReadAsStringAsync();
+            }
+        }
+        catch
+        {
+            message = "Could not roll the dice. Make sure the API is running.";
+        }
+        finally
+        {
+            isRollingDice = false;
+        }
+    }
+
+    private async Task<bool> LoadQuestion()
+    {
+        var questionLoaded = false;
+        isLoadingQuestion = true;
+        question = null;
+        answerResult = null;
+        questionTileMessage = null;
+        questionModalMessage = null;
+        selectedAnswerNumber = 0;
+        remainingSeconds = 30;
+        questionStartedAtUtc = null;
+        questionTimeLimitSeconds = 30;
+        isQuestionExpired = false;
+        hasSubmittedCurrentQuestion = false;
+        isRollingMovementDice = false;
+        isQuestionModalOpen = false;
+        StopCountdown();
+
+        try
+        {
+            var loadQuestionRequest = new LoadQuestionRequest
+            {
+                UsedQuestionIds = usedQuestionIds
+            };
+
+            var response = await Http.PostAsJsonAsync("http://localhost:5073/api/game/question", loadQuestionRequest);
+
+            if (response.IsSuccessStatusCode)
+            {
+                question = await response.Content.ReadFromJsonAsync<QuestionDto>();
+
+                if (question is not null)
+                {
+                    usedQuestionIds.Add(question.QuestionId);
+                    questionTileMessage = $"Question loaded for {GetCurrentPlayerTileColorName()} tile";
+                    isQuestionModalOpen = true;
+                    questionLoaded = true;
+                    message = null;
+                    StartCountdown();
+                }
+            }
+            else
+            {
+                message = await response.Content.ReadAsStringAsync();
+                remainingSeconds = 0;
+            }
+        }
+        catch
+        {
+            message = "Could not load a question. Make sure the API is running.";
+            remainingSeconds = 0;
+        }
+        finally
+        {
+            isLoadingQuestion = false;
+        }
+
+        return questionLoaded;
+    }
+
+    private void SelectAnswer(int answerNumber)
+    {
+        if (!CanSelectAnswer)
+        {
+            return;
+        }
+
+        selectedAnswerNumber = answerNumber;
+        answerResult = null;
+        questionModalMessage = null;
+    }
+
+    private async Task RollMovementDice()
+    {
+        if (!CanRollMovementDice)
+        {
+            return;
+        }
+
+        isRollingMovementDice = true;
+        movementDiceValue = 0;
+        rollingMovementDiceValue = 1;
+        await PlaySound("dice");
+        await AnimateMovementDiceFace();
+
+        if (session is null || hasWinner)
+        {
+            isRollingMovementDice = false;
+            return;
+        }
+
+        if (IsMultiplayerGameplay && hubConnection is not null)
+        {
+            try
+            {
+                await hubConnection.InvokeAsync("RollMultiplayerMovementDice", currentMultiplayerGameCode);
+            }
+            catch
+            {
+                isRollingMovementDice = false;
+                multiplayerRoomMessage = "Could not roll multiplayer movement dice.";
+            }
+
+            return;
+        }
+
+        movementDiceValue = Random.Shared.Next(1, 7);
+        rollingMovementDiceValue = movementDiceValue;
+        isRollingMovementDice = false;
+        questionModalMessage = null;
+        await InvokeAsync(StateHasChanged);
+
+        var questionLoaded = await LoadQuestion();
+
+        if (!questionLoaded)
+        {
+            movementDiceValue = 0;
+            rollingMovementDiceValue = 1;
+        }
+    }
+
+    private async Task AnimateStartDiceFaces()
+    {
+        for (var rollStep = 0; rollStep < 8 && isRollingDice; rollStep++)
+        {
+            rollingPlayer1DiceValue = Random.Shared.Next(1, 7);
+            rollingPlayer2DiceValue = Random.Shared.Next(1, 7);
+            await InvokeAsync(StateHasChanged);
+            await Task.Delay(125);
+        }
+    }
+
+    private async Task AnimateMovementDiceFace()
+    {
+        for (var rollStep = 0; rollStep < 8 && isRollingMovementDice; rollStep++)
+        {
+            rollingMovementDiceValue = Random.Shared.Next(1, 7);
+            await InvokeAsync(StateHasChanged);
+            await Task.Delay(125);
+        }
+    }
+
+    private async Task SubmitAnswer()
+    {
+        if (hasSubmittedCurrentQuestion)
+        {
+            message = "This question has already been submitted.";
+            return;
+        }
+
+        if (question is null)
+        {
+            message = "Please load a question first.";
+            return;
+        }
+
+        if (isQuestionExpired || remainingSeconds <= 0)
+        {
+            questionModalMessage = "Time is up";
+            return;
+        }
+
+        if (selectedAnswerNumber == 0)
+        {
+            questionModalMessage = "Please select an answer.";
+            return;
+        }
+
+        if (IsMultiplayerGameplay)
+        {
+            await SubmitMultiplayerAnswer();
+            return;
+        }
+
+        StopCountdown();
+
+        var currentPlayer = GetCurrentPlayer();
+
+        if (currentPlayer is null)
+        {
+            message = "Please roll dice to decide the first player.";
+            return;
+        }
+
+        isSubmittingAnswer = true;
+        hasSubmittedCurrentQuestion = true;
+        message = null;
+        answerResult = null;
+
+        var submitRequest = new SubmitAnswerRequest
+        {
+            QuestionId = question.QuestionId,
+            SelectedAnswerNumber = selectedAnswerNumber,
+            CurrentPlayerName = currentPlayer.Name,
+            CurrentPlayerPosition = currentPlayer.Position,
+            CurrentPlayerScore = currentPlayer.Score,
+            MovementDiceValue = movementDiceValue
+        };
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("http://localhost:5073/api/game/submit-answer", submitRequest);
+
+            if (response.IsSuccessStatusCode)
+            {
+                answerResult = await response.Content.ReadFromJsonAsync<SubmitAnswerResultDto>();
+
+                if (answerResult is not null)
+                {
+                    var startPosition = currentPlayer.Position;
+                    var finalPosition = answerResult.UpdatedPosition;
+                    var isWinner = answerResult.IsWinner;
+
+                    currentPlayer.Score = answerResult.UpdatedScore;
+                    questionModalMessage = answerResult.Message;
+                    await PlaySound(answerResult.IsCorrect ? "correct" : "wrong");
+                    await InvokeAsync(StateHasChanged);
+                    await Task.Delay(1000);
+                    ClearCurrentQuestion();
+
+                    if (answerResult.IsCorrect && finalPosition > startPosition)
+                    {
+                        await AnimatePlayerMovement(currentPlayer, startPosition, finalPosition);
+                    }
+                    else
+                    {
+                        currentPlayer.Position = finalPosition;
+                    }
+
+                    hasWinner = isWinner;
+                    tileMessage = $"{currentPlayer.Name} is on {GetTileColorName(currentPlayer.Position)} tile";
+
+                    if (hasWinner)
+                    {
+                        await PlaySound("winner");
+                    }
+
+                    if (!hasWinner)
+                    {
+                        SwitchTurn();
+                    }
+                }
+            }
+            else
+            {
+                questionModalMessage = await response.Content.ReadAsStringAsync();
+            }
+        }
+        catch
+        {
+            questionModalMessage = "Could not submit the answer. Make sure the API is running.";
+        }
+        finally
+        {
+            isSubmittingAnswer = false;
+        }
+    }
+
+    private async Task SubmitMultiplayerAnswer()
+    {
+        if (!IsMultiplayerConnected || hubConnection is null)
+        {
+            multiplayerRoomMessage = "Multiplayer is disconnected. Start the API and refresh the page.";
+            return;
+        }
+
+        if (question is null)
+        {
+            questionModalMessage = "Please load a question first.";
+            return;
+        }
+
+        StopCountdown();
+        isSubmittingAnswer = true;
+        hasSubmittedCurrentQuestion = true;
+        message = null;
+        answerResult = null;
+
+        try
+        {
+            await hubConnection.InvokeAsync(
+                "SubmitMultiplayerAnswer",
+                currentMultiplayerGameCode,
+                question.QuestionId,
+                selectedAnswerNumber);
+        }
+        catch
+        {
+            isSubmittingAnswer = false;
+            hasSubmittedCurrentQuestion = false;
+            questionModalMessage = "Could not submit the multiplayer answer.";
+        }
+    }
+
+    private async Task ApplyMultiplayerGameState(
+        int player1Score,
+        int player2Score,
+        int player1Position,
+        int player2Position,
+        string nextTurnPlayerName,
+        string winnerName)
+    {
+        if (session is null)
+        {
+            return;
+        }
+
+        var movingPlayerName = currentPlayerName;
+        var player1StartPosition = session.Player1.Position;
+        var player2StartPosition = session.Player2.Position;
+
+        session.Player1.Score = player1Score;
+        session.Player2.Score = player2Score;
+
+        await Task.Delay(1000);
+        ClearCurrentQuestion();
+
+        if (movingPlayerName == session.Player1.Name && player1Position > player1StartPosition)
+        {
+            await AnimatePlayerMovement(session.Player1, player1StartPosition, player1Position);
+        }
+        else
+        {
+            session.Player1.Position = player1Position;
+        }
+
+        if (movingPlayerName == session.Player2.Name && player2Position > player2StartPosition)
+        {
+            await AnimatePlayerMovement(session.Player2, player2StartPosition, player2Position);
+        }
+        else
+        {
+            session.Player2.Position = player2Position;
+        }
+
+        hasWinner = !string.IsNullOrWhiteSpace(winnerName);
+        currentPlayerName = hasWinner ? winnerName : nextTurnPlayerName;
+
+        var movedPlayer = movingPlayerName == session.Player1.Name ? session.Player1 : session.Player2;
+        tileMessage = $"{movedPlayer.Name} is on {GetTileColorName(movedPlayer.Position)} tile";
+
+        if (hasWinner)
+        {
+            await PlaySound("winner");
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void RestoreMultiplayerSession(MultiplayerSessionStateDto restoredState)
+    {
+        StopCountdown();
+        ClearStateForNewGame();
+
+        currentMultiplayerGameCode = restoredState.GameCode;
+        joinGameCode = restoredState.GameCode;
+        request.Player1Name = restoredState.Player1Name;
+        request.Player2Name = restoredState.Player2Name;
+        multiplayerRoomStatus = restoredState.IsGameStarted ? "Game started" : "Game ready";
+        multiplayerRoomMessage = "Multiplayer session restored.";
+
+        if (!restoredState.IsGameStarted)
+        {
+            return;
+        }
+
+        session = new GameSessionDto
+        {
+            Player1 = new PlayerDto
+            {
+                Name = restoredState.Player1Name,
+                Score = restoredState.Player1Score,
+                Position = restoredState.Player1Position
+            },
+            Player2 = new PlayerDto
+            {
+                Name = restoredState.Player2Name,
+                Score = restoredState.Player2Score,
+                Position = restoredState.Player2Position
+            },
+            Message = "The multiplayer game has been restored."
+        };
+
+        if (restoredState.Player1FirstDiceValue > 0 && restoredState.Player2FirstDiceValue > 0)
+        {
+            diceResult = new RollDiceResultDto
+            {
+                Player1DiceValue = restoredState.Player1FirstDiceValue,
+                Player2DiceValue = restoredState.Player2FirstDiceValue,
+                FirstPlayerName = restoredState.FirstPlayerName,
+                IsDraw = string.IsNullOrWhiteSpace(restoredState.FirstPlayerName),
+                Message = string.IsNullOrWhiteSpace(restoredState.FirstPlayerName)
+                    ? "The dice values are the same. Please roll again."
+                    : $"{restoredState.FirstPlayerName} will play first."
+            };
+        }
+
+        currentPlayerName = string.IsNullOrWhiteSpace(restoredState.WinnerName)
+            ? restoredState.CurrentTurnPlayerName
+            : restoredState.WinnerName;
+        movementDiceValue = restoredState.CurrentMovementDiceValue;
+        rollingMovementDiceValue = movementDiceValue > 0 ? movementDiceValue : 1;
+        hasWinner = !string.IsNullOrWhiteSpace(restoredState.WinnerName);
+
+        if (restoredState.IsQuestionActive && restoredState.CurrentQuestion is not null)
+        {
+            question = restoredState.CurrentQuestion;
+            questionStartedAtUtc = DateTime.SpecifyKind(restoredState.QuestionStartedAt, DateTimeKind.Utc);
+            questionTimeLimitSeconds = restoredState.QuestionTimeLimitSeconds;
+            remainingSeconds = GetServerBasedRemainingSeconds();
+            questionTileMessage = $"Question loaded for {GetCurrentPlayerTileColorName()} tile";
+            questionModalMessage = null;
+            isQuestionModalOpen = true;
+            StartCountdown();
+        }
+
+        if (hasWinner)
+        {
+            message = $"Game over. {restoredState.WinnerName} wins.";
+        }
+    }
+
+    private void StartCountdown()
+    {
+        countdownCancellation = new CancellationTokenSource();
+        _ = RunCountdownAsync(countdownCancellation.Token);
+    }
+
+    private void StopCountdown()
+    {
+        countdownCancellation?.Cancel();
+        countdownCancellation?.Dispose();
+        countdownCancellation = null;
+    }
+
+    private async Task RunCountdownAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                if (IsMultiplayerGameplay && questionStartedAtUtc.HasValue)
+                {
+                    remainingSeconds = GetServerBasedRemainingSeconds();
+                }
+
+                if (remainingSeconds <= 0)
+                {
+                    break;
+                }
+
+                await InvokeAsync(StateHasChanged);
+                await Task.Delay(1000, cancellationToken);
+
+                if (!IsMultiplayerGameplay || !questionStartedAtUtc.HasValue)
+                {
+                    remainingSeconds--;
+                }
+            }
+
+            if (IsMultiplayerGameplay && questionStartedAtUtc.HasValue)
+            {
+                remainingSeconds = GetServerBasedRemainingSeconds();
+                await InvokeAsync(StateHasChanged);
+            }
+
+            if (!cancellationToken.IsCancellationRequested && question is not null && !hasSubmittedCurrentQuestion && !hasWinner)
+            {
+                isQuestionExpired = true;
+                message = "Time is up";
+                questionModalMessage = "Time is up";
+                await InvokeAsync(StateHasChanged);
+                await Task.Delay(1000, cancellationToken);
+
+                if (IsMultiplayerGameplay)
+                {
+                    await SubmitMultiplayerTimeout();
+                    return;
+                }
+
+                await PlaySound("timeUp");
+                questionTileMessage = null;
+                SwitchTurn();
+                tileMessage = currentPlayerName is null ? null : $"{currentPlayerName} is on {GetCurrentPlayerTileColorName()} tile";
+                ClearCurrentQuestion();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    private int GetServerBasedRemainingSeconds()
+    {
+        if (!questionStartedAtUtc.HasValue)
+        {
+            return remainingSeconds;
+        }
+
+        var elapsedSeconds = (int)Math.Floor((DateTime.UtcNow - questionStartedAtUtc.Value).TotalSeconds);
+        return Math.Max(0, questionTimeLimitSeconds - elapsedSeconds);
+    }
+
+    private async Task SubmitMultiplayerTimeout()
+    {
+        if (!IsMultiplayerConnected || hubConnection is null || question is null)
+        {
+            return;
+        }
+
+        hasSubmittedCurrentQuestion = true;
+        isSubmittingAnswer = true;
+
+        try
+        {
+            await hubConnection.InvokeAsync(
+                "MultiplayerQuestionTimedOut",
+                currentMultiplayerGameCode,
+                question.QuestionId);
+        }
+        catch
+        {
+            isSubmittingAnswer = false;
+            questionModalMessage = "Time is up. Could not sync the timeout.";
+        }
+    }
+
+    private PlayerDto? GetCurrentPlayer()
+    {
+        if (session is null || string.IsNullOrWhiteSpace(currentPlayerName))
+        {
+            return null;
+        }
+
+        if (session.Player1.Name == currentPlayerName)
+        {
+            return session.Player1;
+        }
+
+        if (session.Player2.Name == currentPlayerName)
+        {
+            return session.Player2;
+        }
+
+        return null;
+    }
+
+    private void SwitchTurn()
+    {
+        if (session is null)
+        {
+            return;
+        }
+
+        currentPlayerName = currentPlayerName == session.Player1.Name
+            ? session.Player2.Name
+            : session.Player1.Name;
+    }
+
+    private async Task AnimatePlayerMovement(PlayerDto player, int startPosition, int finalPosition)
+    {
+        isAnimatingMovement = true;
+
+        try
+        {
+            for (var position = startPosition + 1; position <= finalPosition; position++)
+            {
+                player.Position = position;
+                tileMessage = $"{player.Name} is on {GetTileColorName(player.Position)} tile";
+                await PlaySound("move");
+                await InvokeAsync(StateHasChanged);
+                await Task.Delay(250);
+            }
+        }
+        finally
+        {
+            isAnimatingMovement = false;
+        }
+    }
+
+    private void ClearCurrentQuestion()
+    {
+        question = null;
+        questionTileMessage = null;
+        questionModalMessage = null;
+        selectedAnswerNumber = 0;
+        movementDiceValue = 0;
+        rollingMovementDiceValue = 1;
+        remainingSeconds = 0;
+        isQuestionExpired = false;
+        hasSubmittedCurrentQuestion = false;
+        isRollingMovementDice = false;
+        isQuestionModalOpen = false;
+    }
+
+    private static string GetDiceImagePath(int diceValue)
+    {
+        return $"/images/game/image{diceValue}.jpg";
+    }
+
+    private static CardColor GetTileColor(int position)
+    {
+        return (position % 3) switch
+        {
+            0 => CardColor.Red,
+            1 => CardColor.Green,
+            _ => CardColor.Yellow
+        };
+    }
+
+    private static string GetTileColorName(int position)
+    {
+        return GetTileColor(position).ToString();
+    }
+
+    private string GetCurrentPlayerTileColorName()
+    {
+        var currentPlayer = GetCurrentPlayer();
+        return currentPlayer is null ? "Red" : GetTileColorName(currentPlayer.Position);
+    }
+
+    private string GetTileCssClass(int position)
+    {
+        var cssClass = GetTileColor(position) switch
+        {
+            CardColor.Red => "tile-red",
+            CardColor.Green => "tile-green",
+            _ => "tile-yellow"
+        };
+
+        if (hasWinner && position == 44)
+        {
+            cssClass += " tile-finish-winner";
+        }
+
+        var currentPlayer = GetCurrentPlayer();
+
+        if (!hasWinner && currentPlayer is not null && currentPlayer.Position == position)
+        {
+            cssClass += isAnimatingMovement ? " tile-current-player tile-moving-player" : " tile-current-player";
+        }
+
+        return cssClass;
+    }
+
+    private static string GetTileGridStyle(int position)
+    {
+        var (row, column) = GetTileGridPosition(position);
+        return $"grid-row: {row}; grid-column: {column};";
+    }
+
+    private static (int Row, int Column) GetTileGridPosition(int position)
+    {
+        return position switch
+        {
+            <= 6 => (7, position + 1),
+            <= 12 => (13 - position, 7),
+            <= 18 => (1, 19 - position),
+            <= 23 => (position - 17, 1),
+            <= 28 => (6, position - 22),
+            <= 32 => (34 - position, 6),
+            <= 36 => (2, 38 - position),
+            <= 39 => (position - 34, 2),
+            <= 42 => (5, position - 37),
+            43 => (4, 5),
+            44 => (4, 4),
+            _ => (7, 1)
+        };
+    }
+
+    private static string GetTileLabel(int position)
+    {
+        return position switch
+        {
+            0 => "Start",
+            44 => "Finish",
+            _ => string.Empty
+        };
+    }
+
+    public void Dispose()
+    {
+        StopCountdown();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        StopCountdown();
+
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+}
+
+<style>
+    .setup-panel {
+        width: 100%;
+        max-width: 1180px;
+        margin: 8px auto 0;
+        padding: 12px;
+        border: 1px solid rgba(185, 198, 220, 0.55);
+        border-radius: 8px;
+        background: linear-gradient(135deg, #eef7ff, #f7f1ff);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+    }
+
+    .game-top-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        padding: 7px 10px;
+        border: 1px solid #d8dee4;
+        border-radius: 8px;
+        background: #ffffff;
+        box-shadow: 0 4px 14px rgba(33, 37, 41, 0.07);
+    }
+
+    .game-top-header h1 {
+        margin: 0;
+        font-size: 1.35rem;
+    }
+
+    .game-top-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .setup-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
+        gap: 12px;
+        align-items: start;
+    }
+
+    .setup-left-column,
+    .setup-right-column {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        min-width: 0;
+    }
+
+    .setup-card,
+    .welcome-card {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px;
+        border: 1px solid rgba(185, 198, 220, 0.7);
+        border-radius: 8px;
+        background: #ffffff;
+        box-shadow: 0 10px 24px rgba(73, 80, 87, 0.1);
+    }
+
+    .welcome-label {
+        align-self: flex-start;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: #e9f5ff;
+        color: #0b5ed7;
+        font-size: 0.68rem;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+
+    .welcome-card h2 {
+        margin: 0;
+        color: #172033;
+        font-size: clamp(1.9rem, 4vw, 3.1rem);
+        line-height: 1;
+    }
+
+    .welcome-subtitle {
+        margin: 0;
+        max-width: 680px;
+        color: #3f4b5f;
+        font-size: 0.96rem;
+        line-height: 1.35;
+    }
+
+    .welcome-highlights {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 2px;
+    }
+
+    .welcome-highlights span {
+        padding: 5px 8px;
+        border: 1px solid #d8e6fb;
+        border-radius: 999px;
+        background: #fbfdff;
+        color: #334155;
+        font-size: 0.78rem;
+        font-weight: 700;
+    }
+
+    .instructions-panel {
+        display: flex;
+        flex-direction: column;
+        padding: 12px;
+        border: 1px solid rgba(185, 198, 220, 0.7);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.88);
+        box-shadow: 0 10px 24px rgba(73, 80, 87, 0.08);
+    }
+
+    .setup-card-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 8px;
+    }
+
+    .setup-card-header h3,
+    .instructions-panel h3 {
+        margin: 0;
+        color: #172033;
+        font-size: 1.05rem;
+    }
+
+    .instruction-columns {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 8px;
+    }
+
+    .instruction-columns h4 {
+        margin: 0 0 4px;
+        color: #25324a;
+        font-size: 0.92rem;
+    }
+
+    .instructions-panel ul,
+    .help-modal ul {
+        margin: 4px 0 0;
+        padding-left: 17px;
+    }
+
+    .instructions-panel li,
+    .help-modal li {
+        margin: 2px 0;
+        color: #465469;
+        font-size: 0.84rem;
+        line-height: 1.25;
+    }
+
+    .multiplayer-setup-panel {
+        border-top: 3px solid #6f42c1;
+    }
+
+    .local-play-panel {
+        border-top: 3px solid #fd7e14;
+    }
+
+    .setup-card-description {
+        margin: 0;
+        color: #5b667a;
+        font-size: 0.84rem;
+        line-height: 1.3;
+    }
+
+    .setup-form-field {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+    }
+
+    .setup-form-field .form-label {
+        margin: 0;
+        color: #334155;
+        font-size: 0.8rem;
+        font-weight: 700;
+    }
+
+    .setup-input {
+        min-height: 36px;
+        border-color: #cbd5e1;
+        border-radius: 8px;
+        background: #fbfdff;
+    }
+
+    .setup-action-button {
+        min-height: 38px;
+        border: 0;
+        border-radius: 8px;
+        color: #ffffff;
+        font-size: 0.92rem;
+        font-weight: 800;
+        box-shadow: 0 9px 18px rgba(51, 65, 85, 0.18);
+        transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+    }
+
+    .setup-action-button:hover:not(:disabled) {
+        color: #ffffff;
+        filter: brightness(1.03);
+        transform: translateY(-1px);
+        box-shadow: 0 12px 22px rgba(51, 65, 85, 0.22);
+    }
+
+    .setup-action-button:disabled {
+        opacity: 0.6;
+        box-shadow: none;
+    }
+
+    .create-game-button {
+        background: linear-gradient(135deg, #4f46e5, #8b5cf6);
+    }
+
+    .join-game-button {
+        background: linear-gradient(135deg, #0f9f8e, #20c997);
+    }
+
+    .start-game-button {
+        background: linear-gradient(135deg, #f97316, #0d6efd);
+    }
+
+    .connection-pill {
+        flex: 0 0 auto;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: #eef6ff;
+        color: #0b5ed7;
+        font-size: 0.72rem;
+        font-weight: 800;
+    }
+
+    .multiplayer-code,
+    .multiplayer-room-message {
+        margin: 0;
+        color: #495057;
+        font-size: 0.82rem;
+    }
+
+    .multiplayer-code {
+        padding: 6px 8px;
+        border: 1px dashed #6f42c1;
+        border-radius: 8px;
+        background: #f7f1ff;
+        color: #3d246c;
+        font-weight: 700;
+    }
+
+    .multiplayer-room-message {
+        padding: 6px 8px;
+        border-radius: 8px;
+        background: #f8f9fa;
+    }
+
+    .local-play-panel .start-game-button {
+        margin-top: auto;
+    }
+
+    .sound-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: #495057;
+        font-size: 0.88rem;
+        font-weight: 600;
+    }
+
+    .game-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 205px;
+        align-items: start;
+        gap: 7px;
+        width: 100%;
+        max-width: 1680px;
+    }
+
+    .game-main {
+        display: grid;
+        grid-template-columns: 180px minmax(0, 1fr);
+        align-items: start;
+        gap: 7px;
+        min-width: 0;
+    }
+
+    .game-info-panel {
+        position: sticky;
+        top: 12px;
+        min-width: 0;
+    }
+
+    .game-center {
+        min-width: 0;
+    }
+
+    .game-center .game-board {
+        margin-top: 0 !important;
+    }
+
+    .dice-panel {
+        position: sticky;
+        top: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 8px;
+        border: 1px solid #d8dee4;
+        border-radius: 8px;
+        background: #f8f9fa;
+    }
+
+    .dice-panel h2 {
+        margin: 0;
+        font-size: 0.98rem;
+    }
+
+    .dice-card {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+        padding: 8px;
+        border: 1px solid #d8dee4;
+        border-radius: 8px;
+        background: #ffffff;
+    }
+
+    .dice-card-label {
+        color: #6c757d;
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+
+    .dice-message,
+    .dice-empty {
+        margin: 0;
+    }
+
+    .dice-empty {
+        color: #6c757d;
+    }
+
+    .roll-movement-button {
+        width: 100%;
+        padding: 9px 10px;
+        border: 0;
+        border-radius: 10px;
+        background: linear-gradient(135deg, #0d6efd, #20c997);
+        color: #ffffff;
+        font-size: 0.95rem;
+        font-weight: 800;
+        box-shadow: 0 6px 14px rgba(13, 110, 253, 0.28);
+    }
+
+    .roll-movement-button:hover,
+    .roll-movement-button:focus {
+        color: #ffffff;
+        background: linear-gradient(135deg, #0b5ed7, #18a97e);
+        box-shadow: 0 8px 18px rgba(13, 110, 253, 0.34);
+    }
+
+    .roll-movement-button:disabled {
+        background: #adb5bd;
+        color: #f8f9fa;
+        box-shadow: none;
+        opacity: 0.75;
+    }
+
+    .status-panel {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 4px;
+        padding: 6px;
+        border: 1px solid #d8dee4;
+        border-radius: 8px;
+        background: #f8f9fa;
+    }
+
+    .status-item {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-height: auto;
+        padding: 5px 6px;
+        border: 1px solid #e1e5ea;
+        border-radius: 6px;
+        background: white;
+        font-size: 0.84rem;
+        line-height: 1.2;
+    }
+
+    .status-main {
+        grid-column: auto;
+    }
+
+    .status-note {
+        grid-column: auto;
+        min-height: auto;
+    }
+
+    .status-label {
+        color: #6c757d;
+        font-size: 0.66rem;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+
+    .multiplayer-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+        padding: 8px;
+        border: 1px solid #d8dee4;
+        border-radius: 8px;
+        background: #ffffff;
+        font-size: 0.8rem;
+    }
+
+    .multiplayer-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+    }
+
+    .compact-note {
+        margin: 6px 0 0;
+        font-size: 0.84rem;
+        font-weight: 600;
+    }
+
+    .current-turn-badge {
+        display: inline-flex;
+        align-items: center;
+        width: 100%;
+        margin-top: 6px;
+        padding: 6px 8px;
+        border: 1px solid #0d6efd;
+        border-radius: 999px;
+        background: #eef5ff;
+        color: #0b4dab;
+        font-size: 0.82rem;
+        font-weight: 800;
+        box-shadow: 0 2px 8px rgba(13, 110, 253, 0.12);
+    }
+
+    .player-summary {
+        display: grid;
+        gap: 6px;
+    }
+
+    .player-summary-card {
+        display: grid;
+        grid-template-columns: 58px minmax(0, 1fr);
+        column-gap: 8px;
+        row-gap: 2px;
+        align-items: center;
+        padding: 7px;
+        border: 1px solid #d8dee4;
+        border-radius: 8px;
+        background: #ffffff;
+        font-size: 0.8rem;
+        line-height: 1.18;
+        box-shadow: 0 1px 3px rgba(33, 37, 41, 0.06);
+    }
+
+    .player-summary-active {
+        border-color: #0d6efd;
+        background: #eef5ff;
+        box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.16), 0 5px 12px rgba(33, 37, 41, 0.1);
+    }
+
+    .player-summary-card strong {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .player-summary-card .status-label,
+    .player-summary-card strong,
+    .player-summary-card span:not(.status-label) {
+        grid-column: 2;
+    }
+
+    .summary-player-image {
+        grid-row: 1 / span 4;
+        width: 58px;
+        height: 58px;
+        object-fit: cover;
+        border: 2px solid #ffffff;
+        border-radius: 50%;
+        background: #ffffff;
+        box-shadow: 0 0 0 1px #d0d0d0;
+    }
+
+    .winner-banner {
+        padding: 12px;
+        border: 2px solid #198754;
+        border-radius: 8px;
+        background: #effaf3;
+    }
+
+    .winner-label {
+        color: #198754;
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+
+    .winner-banner h2 {
+        margin: 2px 0 10px;
+        font-size: 1.25rem;
+    }
+
+    .winner-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 10px;
+    }
+
+    .winner-stat {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 10px;
+        border: 1px solid #c8e6d2;
+        border-radius: 6px;
+        background: #ffffff;
+    }
+
+    .winner-stat span {
+        color: #6c757d;
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+
+    .winner-stat-main {
+        border-color: #198754;
+    }
+
+    .dice-results {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+    }
+
+    .dice-result {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .dice-result p {
+        margin: 0;
+    }
+
+    .dice-rolling {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        border: 1px solid #d8dee4;
+        border-radius: 8px;
+        background: #ffffff;
+    }
+
+    .dice-rolling-large {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        min-height: 118px;
+        text-align: center;
+    }
+
+    .dice-rolling p {
+        margin: 0;
+        font-weight: 600;
+    }
+
+    .rolling-dice-image {
+        width: 76px;
+        height: 76px;
+        object-fit: contain;
+    }
+
+    .dice-image {
+        width: 52px;
+        height: 52px;
+        object-fit: contain;
+    }
+
+    .dice-image-large {
+        width: 68px;
+        height: 68px;
+    }
+
+    .movement-dice-final {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        padding: 6px;
+        border: 1px solid #d8dee4;
+        border-radius: 6px;
+        background: #f8f9fa;
+    }
+
+    .movement-dice-final p {
+        margin: 0;
+        font-weight: 700;
+    }
+
+    .question-modal-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: grid;
+        place-items: center;
+        padding: 16px;
+        background: rgba(33, 37, 41, 0.28);
+        pointer-events: none;
+    }
+
+    .question-modal {
+        pointer-events: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        width: min(560px, 100%);
+        max-height: min(86vh, 680px);
+        overflow: auto;
+        padding: 14px;
+        border: 1px solid #d8dee4;
+        border-radius: 8px;
+        background: #ffffff;
+        box-shadow: 0 16px 40px rgba(33, 37, 41, 0.22);
+    }
+
+    .question-modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+    }
+
+    .question-modal-result {
+        padding: 10px;
+        border: 1px solid #198754;
+        border-radius: 6px;
+        background: #effaf3;
+        font-weight: 700;
+    }
+
+    .readonly-question-message {
+        margin: 0;
+        padding: 8px 10px;
+        border: 1px solid #b6d4fe;
+        border-radius: 6px;
+        background: #eef6ff;
+        color: #084298;
+        font-weight: 700;
+    }
+
+    .help-modal-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 1100;
+        display: grid;
+        place-items: center;
+        padding: 16px;
+        background: rgba(33, 37, 41, 0.35);
+    }
+
+    .help-modal {
+        width: min(520px, 100%);
+        max-height: 90vh;
+        overflow: auto;
+        padding: 16px;
+        border: 1px solid #d8dee4;
+        border-radius: 8px;
+        background: #ffffff;
+        box-shadow: 0 16px 40px rgba(33, 37, 41, 0.22);
+    }
+
+    .help-modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+    }
+
+    .help-modal-header h2 {
+        margin: 0;
+        font-size: 1.25rem;
+    }
+
+    .question-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        width: 100%;
+        padding: 12px;
+        border: 1px solid #d8dee4;
+        border-radius: 8px;
+        background: #ffffff;
+    }
+
+    .question-tile-message {
+        margin: 0;
+        color: #495057;
+        font-weight: 600;
+    }
+
+    .question-timer {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 10px;
+        border: 1px solid #f0b400;
+        border-radius: 6px;
+        background: #fff8df;
+    }
+
+    .question-timer span,
+    .question-section-label {
+        color: #6c757d;
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+
+    .question-text {
+        padding: 12px;
+        border: 1px solid #d8dee4;
+        border-radius: 6px;
+        background: #f8f9fa;
+        font-size: 1.05rem;
+        font-weight: 600;
+    }
+
+    .movement-dice-panel {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px;
+        border: 1px solid #d8dee4;
+        border-radius: 6px;
+        background: #f8f9fa;
+    }
+
+    .movement-dice {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 6px;
+    }
+
+    .movement-dice p {
+        margin: 0;
+    }
+
+    .movement-dice-empty {
+        margin: 6px 0 0;
+        color: #6c757d;
+    }
+
+    .answer-options {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .answer-option {
+        margin: 0;
+        padding: 9px 10px 9px 34px;
+        border: 1px solid #d8dee4;
+        border-radius: 6px;
+        background: #ffffff;
+    }
+
+    .answer-option .form-check-input {
+        margin-left: -24px;
+    }
+
+    .question-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 38px;
+    }
+
+    .submit-hint {
+        color: #6c757d;
+        font-size: 0.9rem;
+    }
+
+    .game-board {
+        display: grid;
+        grid-template-columns: repeat(7, minmax(50px, 1fr));
+        grid-template-rows: repeat(7, minmax(58px, auto));
+        gap: 3px;
+        width: 100%;
+        max-width: 540px;
+        margin-left: auto;
+        margin-right: auto;
+        padding: 6px;
+        border: 1px solid #d8dee4;
+        border-radius: 8px;
+        background: #f2f4f7;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    }
+
+    .board-tile {
+        min-height: 58px;
+        position: relative;
+        border: 2px solid #c9c9c9;
+        border-radius: 7px;
+        padding: 2px;
+        background: #f8f9fa;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        overflow: hidden;
+        box-shadow: 0 2px 5px rgba(33, 37, 41, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    }
+
+    .board-center-decoration {
+        grid-row: 3;
+        grid-column: 4;
+        display: grid;
+        place-items: center;
+        min-height: 58px;
+        padding: 4px;
+        border: 2px dashed #198754;
+        border-radius: 8px;
+        background: #f4fbf6;
+        color: #198754;
+        font-size: 0.58rem;
+        font-weight: 800;
+        text-align: center;
+        text-transform: uppercase;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    }
+
+    .tile-number {
+        line-height: 1;
+        font-weight: 700;
+        font-size: 0.76rem;
+        color: #212529;
+    }
+
+    .tile-label {
+        min-height: 10px;
+        font-size: 0.5rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: #343a40;
+    }
+
+    .tile-color {
+        font-size: 0.48rem;
+        line-height: 1;
+        color: #495057;
+        font-weight: 700;
+    }
+
+    .tile-red {
+        border-color: #dc3545;
+        background: #fff1f2;
+    }
+
+    .tile-green {
+        border-color: #198754;
+        background: #effaf3;
+    }
+
+    .tile-yellow {
+        border-color: #f0b400;
+        background: #fff8df;
+    }
+
+    .tile-finish-winner {
+        border-color: #198754;
+        box-shadow: 0 0 0 3px rgba(25, 135, 84, 0.22);
+        background: #dff7e7;
+    }
+
+    .tile-current-player {
+        z-index: 1;
+        border-color: #0d6efd;
+        box-shadow: 0 0 0 4px rgba(13, 110, 253, 0.24), 0 8px 18px rgba(13, 110, 253, 0.18);
+    }
+
+    .tile-current-player::after {
+        content: "TURN";
+        position: absolute;
+        top: 3px;
+        right: 3px;
+        padding: 1px 4px;
+        border-radius: 999px;
+        background: #0d6efd;
+        color: #ffffff;
+        font-size: 0.48rem;
+        font-weight: 800;
+        line-height: 1;
+    }
+
+    .tile-moving-player {
+        border-color: #6610f2;
+        box-shadow: 0 0 0 4px rgba(102, 16, 242, 0.22), 0 10px 22px rgba(102, 16, 242, 0.2);
+    }
+
+    .tile-moving-player::after {
+        content: "MOVE";
+        background: #6610f2;
+    }
+
+    .player-markers {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        margin-top: 3px;
+    }
+
+    .player-marker {
+        width: 34px;
+        height: 34px;
+        object-fit: cover;
+        border-radius: 50%;
+        background: white;
+        border: 2px solid #ffffff;
+        box-shadow: 0 0 0 1px #d0d0d0, 0 2px 5px rgba(33, 37, 41, 0.22);
+    }
+
+    .player-marker-current {
+        box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.28), 0 4px 10px rgba(33, 37, 41, 0.28);
+    }
+
+    .player-marker-moving {
+        border-color: #ffffff;
+        transform: scale(1.08);
+        box-shadow: 0 0 0 4px rgba(102, 16, 242, 0.32), 0 8px 14px rgba(102, 16, 242, 0.28);
+    }
+
+    @@media (min-width: 992px) {
+        .setup-grid {
+            grid-template-rows: minmax(150px, auto) minmax(0, 1fr);
+            align-items: stretch;
+        }
+
+        .setup-left-column,
+        .setup-right-column {
+            display: contents;
+        }
+
+        .welcome-card {
+            grid-column: 1;
+            grid-row: 1;
+        }
+
+        .instructions-panel {
+            grid-column: 1;
+            grid-row: 2;
+        }
+
+        .multiplayer-setup-panel {
+            grid-column: 2;
+            grid-row: 1;
+        }
+
+        .local-play-panel {
+            grid-column: 2;
+            grid-row: 2;
+        }
+
+        .welcome-card,
+        .instructions-panel,
+        .multiplayer-setup-panel,
+        .local-play-panel {
+            height: 100%;
+        }
+
+        .game-board {
+            grid-template-columns: repeat(7, minmax(52px, 1fr));
+            grid-template-rows: repeat(7, minmax(60px, auto));
+            min-width: 0;
+        }
+    }
+
+    @@media (max-width: 991px) {
+        .setup-panel {
+            padding: 12px;
+        }
+
+        .setup-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .instruction-columns {
+            grid-template-columns: 1fr;
+        }
+
+        .game-layout {
+            grid-template-columns: 1fr;
+        }
+
+        .game-main {
+            grid-template-columns: 1fr;
+        }
+
+        .game-info-panel {
+            position: static;
+        }
+
+        .dice-panel {
+            position: static;
+            order: 2;
+        }
+
+        .status-panel {
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        }
+
+        .status-main,
+        .status-note {
+            grid-column: 1 / -1;
+        }
+
+        .player-summary {
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        }
+    }
+
+    @@media (max-width: 575px) {
+        .game-top-header {
+            align-items: flex-start;
+        }
+
+        .game-top-header h1 {
+            font-size: 1.35rem;
+        }
+
+        .game-top-actions {
+            width: 100%;
+            justify-content: space-between;
+        }
+
+        .setup-panel {
+            padding: 8px;
+            margin-top: 10px;
+        }
+
+        .setup-card,
+        .welcome-card,
+        .instructions-panel {
+            padding: 10px;
+        }
+
+        .setup-card-header {
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .connection-pill {
+            align-self: flex-start;
+        }
+
+        .status-main {
+            grid-column: 1 / -1;
+        }
+
+        .dice-results {
+            grid-template-columns: 1fr;
+        }
+
+        .game-board {
+            grid-template-columns: repeat(7, minmax(42px, 1fr));
+            grid-template-rows: repeat(7, minmax(62px, auto));
+            gap: 3px;
+            padding: 6px;
+        }
+
+        .board-tile {
+            min-height: 62px;
+            padding: 2px;
+        }
+
+        .board-center-decoration {
+            min-height: 62px;
+            padding: 4px;
+            font-size: 0.58rem;
+        }
+
+        .player-marker {
+            width: 32px;
+            height: 32px;
+        }
+
+        .player-summary-card {
+            grid-template-columns: 56px minmax(0, 1fr);
+        }
+
+        .summary-player-image {
+            width: 56px;
+            height: 56px;
+        }
+
+        .question-panel {
+            padding: 10px;
+            gap: 10px;
+        }
+
+        .question-modal {
+            max-height: 90vh;
+            padding: 12px;
+        }
+
+        .movement-dice-panel,
+        .question-actions {
+            align-items: stretch;
+            flex-direction: column;
+        }
+    }
+</style>

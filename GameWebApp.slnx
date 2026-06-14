@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="GameWebApp.Api/GameWebApp.Api.csproj" />
+  <Project Path="GameWebApp.Client/GameWebApp.Client.csproj" />
+  <Project Path="GameWebApp.Shared/GameWebApp.Shared.csproj" />
+</Solution>

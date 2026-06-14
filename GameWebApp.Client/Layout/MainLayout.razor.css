@@ -1,0 +1,18 @@
+.page {
+    min-height: 100vh;
+}
+
+main {
+    width: 100%;
+}
+
+.content {
+    width: 100%;
+    padding: 12px;
+}
+
+@media (min-width: 768px) {
+    .content {
+        padding: 14px 18px;
+    }
+}

@@ -1,0 +1,46 @@
+# Build output
+bin/
+obj/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Visual Studio Code
+.vscode/
+
+# AI assistant files
+AGENTS.md
+CLAUDE.md
+CODEX.md
+.claude/
+.codex/
+.github/copilot-instructions.md
+
+# Secrets and local settings
+.env
+.env.*
+!.env.example
+secrets.json
+appsettings.Local.json
+appsettings.*.local.json
+
+# Logs and temporary files
+*.log
+logs/
+*.tmp
+*.bak
+*.cache
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Tests and coverage
+TestResults/
+coverage/
+coverage.*
